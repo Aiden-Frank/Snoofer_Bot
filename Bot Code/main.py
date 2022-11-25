@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#This code is intended for a Lego Mindstorms robot
+#This code is intended for a Lego Mindstorms robot using a Raspberry Pi/ PiStorms control system
 
 #First, only display programs are imported, so that the bot can display on screen
 # how much it has imported.
