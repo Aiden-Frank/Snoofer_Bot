@@ -16,7 +16,7 @@ def on_message(client, userdata, message):
     split_array=incoming_array.split(',')
     new_point=[int(split_array[0]),int(split_array[1])]
 #Address of EV3 broker
-broker_address="192.168.7.154"
+broker_address="192.168.7.212"
 #Create a client that will recieve messages
 client=mqtt.Client()
 #Set on_message funcion of client to my on_message function
