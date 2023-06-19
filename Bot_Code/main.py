@@ -37,7 +37,8 @@ class Snoofer():
 
 
 class Whisker():
-    def __init__(self, multiplexor_port=1,bus=SMBus(1)) -> None:
+    def __init__(self, multiplexor_port=1,bus=SMBus(1), name="W") -> None:
+        self.name=name
         self.multiplexor_port=multiplexor_port
         self.port_address=int(math.pow(2, self.multiplexor_port))
         self.bus=bus
@@ -57,18 +58,24 @@ class Whisker():
                 if button.enter==True:
                     exit
             
-
     def read(self):
 #       0x44 and 0x45 are the locations of output
         raw_readout=self.bus.read_i2c_block_data(0x21, 0x44, 1)[0]
-        if raw_readout<self.calibration_value+5:
+        self.bus.write_byte_data(0x70, 0, self.port_address)
+        print(self.name)
+        print(raw_readout)
+        print(self.calibration_value)
+        if raw_readout<self.calibration_value+7:
             return(0)
         elif raw_readout>=self.calibration_value+7 and raw_readout<=self.calibration_value+20:
             return(1)
         else:
             return(2)
     def calibrate(self) -> None:
+        time.sleep(0.5)
         self.calibration_value=self.bus.read_i2c_block_data(0x21, 0x44, 1)[0]
+        time.sleep(0.5)
+        print (self.calibration_value)
 
 
 
@@ -94,48 +101,55 @@ gyroport=set_port(port='pistorms:BAS1', mode='ev3-uart', device='lego-ev3-gyro')
 gyro=GyroSensor('pistorms:BAS1')
 show=Display()
 snoofermotor=Motor(OUTPUT_A)
+time.sleep(10)
 whiskers_port=set_port('pistorms:BBS2',"i2c-thru", "Custom")
-left_whisker=Whisker(multiplexor_port=2)
+left_whisker=Whisker(multiplexor_port=2, name="LW")
 left_whisker.selftest()
 left_whisker.calibrate()
-right_whisker=Whisker(multiplexor_port=1)
+right_whisker=Whisker(multiplexor_port=1, name="RW")
 right_whisker.selftest()
 right_whisker.calibrate()
-
+time.sleep(1)
 
 #   Snoofer Calibration
 
-show.text_pixels("Use whiskers to move \n snoofer so orange \n pointer is over \n the orange peg. \n Press middle button \n when done", x=10, y=10, font=fonts.load('lutBS14'))
-show.update()
+print("------ \n Use whiskers to move snoofer so orange pointer is over the orange peg. Press middle button when done. \n ------")
 
 
+print ("------ \n Entering Snoofer Calibration \n ------")
 while mode=="Pre-Run":
     left_output=left_whisker.read()
     right_output=right_whisker.read()
     if left_output>0 and right_output>0:
         issue_solved=0
-        show.text_pixels("Only press one \n whisker at a time! \n \n Press enter to \n try again." , x=10, y=10, font=myfont)
-        show.update()
+        snoofermotor.stop()
+        print(" Only press one whisker at a time! Press GO to try again.")
         while issue_solved==0:
             if button.enter:
                 issue_solved=1
-                show.text_pixels("Use whiskers to move \n snoofer so orange \n pointer is over \n the orange peg. \n Press button \n when done", x=10, y=10, font=fonts.load('lutBS14'))
-                show.update()
+                time.sleep(0.5)
+
+
     if left_output==1:
         snoofermotor.run_forever(speed_sp=72)
+        print("L = 1")
     elif left_output==2:
         snoofermotor.run_forever(speed_sp=100)
+        print("L = 2")
     elif right_output==1:
         snoofermotor.run_forever(speed_sp=-72)
+        print("R = 1")
     elif right_output==2:
         snoofermotor.run_forever(speed_sp=-100)
+        print("R = 2")
     else:
-        pass
+        snoofermotor.stop()
     if button.enter:
         mode="Initiation"
+        print("Mode set: Initiation")
         drive.odometry_start()
         gyro.calibrate()
-    time.sleep(0.1)
+    time.sleep(1)
 
 
 show.text_pixels("Place bot in \n start position \n \n Press button when done", x=10, y=10, font=myfont)
