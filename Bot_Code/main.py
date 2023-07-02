@@ -2,8 +2,6 @@
 #This code is intended for a Lego Mindstorms robot
 
 from ev3dev2.button import Button
-from ev3dev2.display import Display
-from ev3dev2.display import fonts
 from ev3dev2.motor import (Motor, OUTPUT_A, OUTPUT_C, OUTPUT_D,
                             MoveDifferential, SpeedRPM)
 from ev3dev2.port import LegoPort
@@ -20,7 +18,7 @@ import time
 #       Wander: Bumbling about looking for stuff
 
 mode="Pre-Run"
-
+print("Mode set: Pre-Run")
 #   Classes
 #   Enter new classes in alphabetical order
 
@@ -51,8 +49,7 @@ class Whisker():
         try:
             self.bus.read_i2c_block_data(0x21, 0x44, 1)[0]
         except:
-            show.text_pixels("Whisker selftest error: \n Failed to read value \n Press GO to stop code" , x=10, y=10, font=fonts.load('lutBS14'))
-            show.update
+            print("Whisker selftest error: \n Failed to read value \n Press GO to stop code")
             while button.enter==False:
                 time.wait(0.1)
                 if button.enter==True:
@@ -60,11 +57,8 @@ class Whisker():
             
     def read(self):
 #       0x44 and 0x45 are the locations of output
-        raw_readout=self.bus.read_i2c_block_data(0x21, 0x44, 1)[0]
         self.bus.write_byte_data(0x70, 0, self.port_address)
-        print(self.name)
-        print(raw_readout)
-        print(self.calibration_value)
+        raw_readout=self.bus.read_i2c_block_data(0x21, 0x44, 1)[0]
         if raw_readout<self.calibration_value+7:
             return(0)
         elif raw_readout>=self.calibration_value+7 and raw_readout<=self.calibration_value+20:
@@ -72,6 +66,7 @@ class Whisker():
         else:
             return(2)
     def calibrate(self) -> None:
+        self.bus.write_byte_data(0x70, 0, self.port_address)
         time.sleep(0.5)
         self.calibration_value=self.bus.read_i2c_block_data(0x21, 0x44, 1)[0]
         time.sleep(0.5)
@@ -80,6 +75,12 @@ class Whisker():
 
 
 #   Functions
+
+def get_snoofer_angle():
+    motor_angle_deg=snoofermotor.position
+    motor_angle=math.radians(motor_angle_deg)
+    snoofer_angle=-17.866*math.cos(motor_angle+0.0626)-1.3659
+    return snoofer_angle
 
 def set_port(port,mode,device): 
 #   Function to initiate sensors; port should be INPUT_N where N is 1 to 4
@@ -96,10 +97,10 @@ def set_port(port,mode,device):
 button=Button()
 bot_placed=False
 drive=MoveDifferential(OUTPUT_C, OUTPUT_D, EV3EducationSetTire, 152)
-myfont=fonts.load('lutBS18')
 gyroport=set_port(port='pistorms:BAS1', mode='ev3-uart', device='lego-ev3-gyro')
 gyro=GyroSensor('pistorms:BAS1')
-show=Display()
+sensorport=set_port(port='pistorms:BBS1', mode='ev3-uart', device='lego-ev3-us')
+sensor=UltrasonicSensor('pistorms:BBS1')
 snoofermotor=Motor(OUTPUT_A)
 time.sleep(10)
 whiskers_port=set_port('pistorms:BBS2',"i2c-thru", "Custom")
@@ -109,39 +110,26 @@ left_whisker.calibrate()
 right_whisker=Whisker(multiplexor_port=1, name="RW")
 right_whisker.selftest()
 right_whisker.calibrate()
-time.sleep(1)
+time.sleep(0.5)
 
 #   Snoofer Calibration
 
-print("------ \n Use whiskers to move snoofer so orange pointer is over the orange peg. Press middle button when done. \n ------")
-
-
-print ("------ \n Entering Snoofer Calibration \n ------")
+print("------ \nUse whiskers to move snoofer so black part from motor faces out, parallel to grey peice below it. Press GO when done. \n------")
 while mode=="Pre-Run":
     left_output=left_whisker.read()
     right_output=right_whisker.read()
     if left_output>0 and right_output>0:
-        issue_solved=0
         snoofermotor.stop()
-        print(" Only press one whisker at a time! Press GO to try again.")
-        while issue_solved==0:
-            if button.enter:
-                issue_solved=1
-                time.sleep(0.5)
-
+        print("Only press one whisker at a time!")
 
     if left_output==1:
-        snoofermotor.run_forever(speed_sp=72)
-        print("L = 1")
-    elif left_output==2:
         snoofermotor.run_forever(speed_sp=100)
-        print("L = 2")
+    elif left_output==2:
+        snoofermotor.run_forever(speed_sp=200)
     elif right_output==1:
-        snoofermotor.run_forever(speed_sp=-72)
-        print("R = 1")
-    elif right_output==2:
         snoofermotor.run_forever(speed_sp=-100)
-        print("R = 2")
+    elif right_output==2:
+        snoofermotor.run_forever(speed_sp=-200)
     else:
         snoofermotor.stop()
     if button.enter:
@@ -149,12 +137,20 @@ while mode=="Pre-Run":
         print("Mode set: Initiation")
         drive.odometry_start()
         gyro.calibrate()
-    time.sleep(1)
+    time.sleep(0.1)
 
 
-show.text_pixels("Place bot in \n start position \n \n Press button when done", x=10, y=10, font=myfont)
+print("Place bot in start position \n Press GO when done")
 while bot_placed==False:
     if button.enter:
         bot_placed=True
+        mode="Wander"
 while mode=="Wander":
     drive.on(40,40)
+    snoofermotor.on(40)
+    if button.enter:
+        snoofermotor.off()
+        time.sleep(0.5)
+        temp=get_snoofer_angle()
+        print(temp)
+        time.sleep(1)
