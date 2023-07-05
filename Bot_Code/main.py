@@ -9,6 +9,7 @@ from ev3dev2.sensor.lego import UltrasonicSensor, GyroSensor, TouchSensor
 from ev3dev2.sensor import INPUT_1, INPUT_2, INPUT_3, INPUT_4
 from ev3dev2.wheel import EV3EducationSetTire
 import math
+import paho.mqtt.client as mqtt
 from smbus import SMBus
 import time
 
@@ -22,18 +23,32 @@ print("Mode set: Pre-Run")
 #   Classes
 #   Enter new classes in alphabetical order
 
+class Comms():
+    def __init__(self) -> None:
+        self.client = mqtt.Client()
+        broker_address="192.168.7.212"
+        self.client.connect(broker_address)
+        def on_message(client, userdata, message):
+            str(message.payload.decode("utf-8"))
+            global recieved
+            recieved=int(message.payload.decode("utf-8"))
+            print(recieved)
+        self.client.on_message=on_message
+        self.client.subscribe('Computer_to_bot')
+        self.client.loop_start()
+    def send_coords(self,string):
+        self.client.publish("Bot_to_computer",string)
+
 class Snoofer():
     def __init__(self, port='pistorms:BBS1', mode='ev3-uart') -> None:
         self.port=port
         self.mode=mode
-        set_port(self.port, self.mode, device='lego-ev3-us')
+        set_port('pistorms:BBS1','ev3-uart', device='lego-ev3-us')
         time.sleep(0.5)
         self.distance_sensor=UltrasonicSensor('pistorms:BBS1')
     def calibrate(self):
         pass
     
-
-
 class Whisker():
     def __init__(self, multiplexor_port=1,bus=SMBus(1), name="W") -> None:
         self.name=name
@@ -72,8 +87,6 @@ class Whisker():
         time.sleep(0.5)
         print (self.calibration_value)
 
-
-
 #   Functions
 
 def get_snoofer_angle():
@@ -92,6 +105,32 @@ def set_port(port,mode,device):
         sensor.set_device=device
     time.sleep(0.5)
 
+def zero_in():
+    drive.on(15,15)
+    while snoofer.distance_centimeters>4:
+        left_output=left_whisker.read()
+        right_output=right_whisker.read()
+        if left_output>0:
+            drive.off()
+            time.sleep(1)
+            drive.on_for_distance(24, -50, brake=False, block=True)
+            time.sleep(0.2)
+#           IMPORTANT: Do not enable block on following turn command, will hold up forever.
+            drive.turn_degrees(20, -20, block=False, use_gyro=False)
+            time.sleep(0.5)
+            print('Im TRYING to drive')
+            drive.on(15,15)
+        if right_output>0:
+            drive.off()
+            time.sleep(1)
+            drive.on_for_distance(24, -50, brake=False, block=True)
+            time.sleep(0.2)
+#           IMPORTANT: Do not enable block on following turn command, will hold up forever.
+            drive.turn_degrees(20, 20, block=False, use_gyro=False)
+            time.sleep(0.5)
+            print('Im TRYING to drive')
+            drive.on(15,15)
+
 #   Hardware
 
 button=Button()
@@ -99,10 +138,13 @@ bot_placed=False
 drive=MoveDifferential(OUTPUT_C, OUTPUT_D, EV3EducationSetTire, 152)
 gyroport=set_port(port='pistorms:BAS1', mode='ev3-uart', device='lego-ev3-gyro')
 gyro=GyroSensor('pistorms:BAS1')
+drive.gyro=gyro
 sensorport=set_port(port='pistorms:BBS1', mode='ev3-uart', device='lego-ev3-us')
 sensor=UltrasonicSensor('pistorms:BBS1')
 snoofermotor=Motor(OUTPUT_A)
-time.sleep(10)
+time.sleep(2)
+set_port('pistorms:BBS1','ev3-uart', device='lego-ev3-us')
+snoofer=UltrasonicSensor("pistorms:BBS1")
 whiskers_port=set_port('pistorms:BBS2',"i2c-thru", "Custom")
 left_whisker=Whisker(multiplexor_port=2, name="LW")
 left_whisker.selftest()
@@ -114,7 +156,7 @@ time.sleep(0.5)
 
 #   Snoofer Calibration
 
-print("------ \nUse whiskers to move snoofer so black part from motor faces out, parallel to grey peice below it. Press GO when done. \n------")
+print("------\nUse whiskers to move snoofer so black part from motor faces out, parallel to grey peice below it. Press GO when done.\n------")
 while mode=="Pre-Run":
     left_output=left_whisker.read()
     right_output=right_whisker.read()
@@ -146,11 +188,13 @@ while bot_placed==False:
         bot_placed=True
         mode="Wander"
 while mode=="Wander":
-    drive.on(40,40)
     snoofermotor.on(40)
-    if button.enter:
-        snoofermotor.off()
-        time.sleep(0.5)
-        temp=get_snoofer_angle()
-        print(temp)
-        time.sleep(1)
+    drive.on(40,40)
+    left_output=left_whisker.read()
+    right_output=right_whisker.read()
+    if snoofer.distance_centimeters<20:
+        zero_in()
+    if left_output>0:
+        zero_in()
+    if right_output>0:
+        zero_in()
