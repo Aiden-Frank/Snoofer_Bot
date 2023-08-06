@@ -10,8 +10,10 @@ from ev3dev2.sensor import INPUT_1, INPUT_2, INPUT_3, INPUT_4
 from ev3dev2.wheel import EV3EducationSetTire
 import math
 import paho.mqtt.client as mqtt
+import random
 from smbus import SMBus
 import time
+
 
 #   Mode Library    The modes that define the bot's behavior
 #       Pre-Run: Preparing functions, classes, hardware, and calibrations.
@@ -20,6 +22,7 @@ import time
 
 mode="Pre-Run"
 print("Mode set: Pre-Run")
+object_found=False
 #   Classes
 #   Enter new classes in alphabetical order
 
@@ -58,7 +61,7 @@ class Whisker():
 #       Write to multiplexor, which is at 0x70 by default. to tell it 
 #       which port set to use at this moment
         self.bus.write_byte_data(0x70, 0, self.port_address)
-#       Write to sensor, which is at 0x21 by default, setting mode to read analog voltage
+#       Write to sensor, which is at 0x21, setting mode to read analog voltage
         self.bus.write_i2c_block_data(0x21, 0x42, [1])
     def selftest(self):
         try:
@@ -85,15 +88,24 @@ class Whisker():
         time.sleep(0.5)
         self.calibration_value=self.bus.read_i2c_block_data(0x21, 0x44, 1)[0]
         time.sleep(0.5)
-        print (self.calibration_value)
 
 #   Functions
 
 def get_snoofer_angle():
-    motor_angle_deg=snoofermotor.position
+    motor_angle_deg=snoofermotor.position()
     motor_angle=math.radians(motor_angle_deg)
     snoofer_angle=-17.866*math.cos(motor_angle+0.0626)-1.3659
     return snoofer_angle
+
+def random_turn():
+    magnitude=10*random.randint(4,18)
+    direction=random.randint(1,2)
+    if direction==2:
+        direction=-1
+    drive.turn_degrees(20, direction*magnitude, block=True)
+    print (direction*magnitude)
+    print("I'm done with the turn, I'm just lazy")
+    return
 
 def set_port(port,mode,device): 
 #   Function to initiate sensors; port should be INPUT_N where N is 1 to 4
@@ -106,42 +118,68 @@ def set_port(port,mode,device):
     time.sleep(0.5)
 
 def zero_in():
+    drive.stop()
+    print("Object detected")
+    global object_found
+    snoofermotor.stop()
+    time.sleep(0.5)
+    snoofer_stopped=False
+    snoofermotor.on(30)
+    while snoofer_stopped==False:
+        snooferpos=snoofermotor.position%360
+        if snooferpos==92:
+            snoofermotor.stop()
+            snoofer_stopped=True
+            print(snooferpos)
+    print("The snoofer should be straight")
     drive.on(15,15)
-    while snoofer.distance_centimeters>4:
+    while snoofer.distance_centimeters>6:
         left_output=left_whisker.read()
         right_output=right_whisker.read()
+        time.sleep(0.2)
+        print(snoofer.distance_centimeters)
         if left_output>0:
-            drive.off()
-            time.sleep(1)
+            time.sleep(0.2)
             drive.on_for_distance(24, -50, brake=False, block=True)
             time.sleep(0.2)
 #           IMPORTANT: Do not enable block on following turn command, will hold up forever.
             drive.turn_degrees(20, -20, block=False, use_gyro=False)
             time.sleep(0.5)
-            print('Im TRYING to drive')
             drive.on(15,15)
         if right_output>0:
             drive.off()
-            time.sleep(1)
+            time.sleep(0.3)
             drive.on_for_distance(24, -50, brake=False, block=True)
             time.sleep(0.2)
 #           IMPORTANT: Do not enable block on following turn command, will hold up forever.
             drive.turn_degrees(20, 20, block=False, use_gyro=False)
-            time.sleep(0.5)
-            print('Im TRYING to drive')
+            time.sleep(0.2)
             drive.on(15,15)
+    object_found=True
+    drive.off()
+    drive.on_for_distance(36, -360)
+    time.sleep(0.5)
+    random_turn()
+    snoofermotor.on(30)
+    drive.on(30,30)
+    return
 
 #   Hardware
 
+
 button=Button()
-bot_placed=False
+left_motor=Motor(OUTPUT_C)
+left_motor.stop_action='brake'
+right_motor=Motor(OUTPUT_D)
+right_motor.stop_action='brake'
 drive=MoveDifferential(OUTPUT_C, OUTPUT_D, EV3EducationSetTire, 152)
 gyroport=set_port(port='pistorms:BAS1', mode='ev3-uart', device='lego-ev3-gyro')
 gyro=GyroSensor('pistorms:BAS1')
 drive.gyro=gyro
 sensorport=set_port(port='pistorms:BBS1', mode='ev3-uart', device='lego-ev3-us')
-sensor=UltrasonicSensor('pistorms:BBS1')
+sensor_connected=False
 snoofermotor=Motor(OUTPUT_A)
+snoofermotor.stop_action='brake'
 time.sleep(2)
 set_port('pistorms:BBS1','ev3-uart', device='lego-ev3-us')
 snoofer=UltrasonicSensor("pistorms:BBS1")
@@ -152,7 +190,10 @@ left_whisker.calibrate()
 right_whisker=Whisker(multiplexor_port=1, name="RW")
 right_whisker.selftest()
 right_whisker.calibrate()
+print(left_motor.state)
 time.sleep(0.5)
+
+
 
 #   Snoofer Calibration
 
@@ -179,22 +220,24 @@ while mode=="Pre-Run":
         print("Mode set: Initiation")
         drive.odometry_start()
         gyro.calibrate()
+        snoofermotor.position=0
+        print(snoofermotor.position)
     time.sleep(0.1)
 
-
-print("Place bot in start position \n Press GO when done")
-while bot_placed==False:
-    if button.enter:
-        bot_placed=True
-        mode="Wander"
+mode="Wander"
+print('Mode set: Wander')
+snoofermotor.on(30)
+drive.on(30,30)
 while mode=="Wander":
-    snoofermotor.on(40)
-    drive.on(40,40)
+    object_found=False
     left_output=left_whisker.read()
     right_output=right_whisker.read()
-    if snoofer.distance_centimeters<20:
+    if snoofer.distance_centimeters<30 and object_found==False:
         zero_in()
-    if left_output>0:
+        print("I have escaped the loop!")
+    if left_output>0 and object_found==False:
         zero_in()
-    if right_output>0:
+        print("I have escaped the loop!")
+    if right_output>0 and object_found==False:
         zero_in()
+        print("I have escaped the loop!")
