@@ -9,6 +9,7 @@ from ev3dev2.sensor.lego import UltrasonicSensor, GyroSensor, TouchSensor
 from ev3dev2.sensor import INPUT_1, INPUT_2, INPUT_3, INPUT_4
 from ev3dev2.wheel import EV3EducationSetTire
 import math
+import numpy as np
 import paho.mqtt.client as mqtt
 import random
 from smbus import SMBus
@@ -43,15 +44,26 @@ class Comms():
         self.client.publish("Bot_to_computer",string)
 
 class Snoofer():
-    def __init__(self, port='pistorms:BBS1', mode='ev3-uart') -> None:
-        self.port=port
-        self.mode=mode
-        set_port('pistorms:BBS1','ev3-uart', device='lego-ev3-us')
-        time.sleep(0.5)
-        self.distance_sensor=UltrasonicSensor('pistorms:BBS1')
-    def calibrate(self):
-        pass
-    
+    #Note: LiDAR sensor accuracy changes with object angular width
+    def __init__(self,bus=SMBus(1)):
+        self.bus=bus
+        self.raw_values_list=[6.2,11.1,12.3,12.9,13.9,14.7,16.3,17.7,18.6,19.5,20.5,21.5,22.4,23.1,24.2,25.9,26.6,27.5,28.7,29.0,33.6,39.1,43.4,47.1,51.5,54.2,55.3,58.6,61.7,63,64.1,64.9,66.2,67.6,69.4,78.6,88.5,98.8,109,114.2,123.8,137.4,142.4,148.8,159.3,172.6,182.7,191.5,194]
+        self.corrected_values_list=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,25,30,35,40,45,50,51,52,53,54,55,56,57,58,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200]
+        self.raw_values=np.asarray(self.raw_values_list)
+        self.corrected_values=np.asarray(self.corrected_values_list)
+    def read_direct(self):
+        #Reads sensor output in cm, which is often off by 9-10 cm
+        self.bus.write_byte_data(0x62, 0x00, 0x04)
+        while (self.bus.read_byte_data(0x62,0x01)&1)==True:
+            time.sleep(0.05)
+        readout_low_byte,readout_high_byte=self.bus.read_i2c_block_data(0x62,0x10,2)
+        readout=readout_low_byte+(readout_high_byte<<8)
+        return int(readout)
+    def read_corrected(self):
+        #Attempts to correct sensor output, returns cm
+        raw_readout=self.read_direct()
+        corrected_readout=np.interp([raw_readout], self.raw_values, self.corrected_values, right=raw_readout)
+        return int(corrected_readout)
 class Whisker():
     def __init__(self, multiplexor_port=1,bus=SMBus(1), name="W") -> None:
         self.name=name
@@ -103,8 +115,10 @@ def random_turn():
     if direction==2:
         direction=-1
     drive.turn_degrees(20, direction*magnitude, block=True)
+    time.sleep(magnitude/60)
+    print ("Turn argument:")
     print (direction*magnitude)
-    print("I'm done with the turn, I'm just lazy")
+    print("I'm done with the turn")
     return
 
 def set_port(port,mode,device): 
@@ -133,11 +147,11 @@ def zero_in():
             print(snooferpos)
     print("The snoofer should be straight")
     drive.on(15,15)
-    while snoofer.distance_centimeters>6:
+    while snoofer.read_corrected()>6:
         left_output=left_whisker.read()
         right_output=right_whisker.read()
         time.sleep(0.2)
-        print(snoofer.distance_centimeters)
+        print(snoofer.read_corrected())
         if left_output>0:
             time.sleep(0.2)
             drive.on_for_distance(24, -50, brake=False, block=True)
@@ -159,9 +173,12 @@ def zero_in():
     drive.off()
     drive.on_for_distance(36, -360)
     time.sleep(0.5)
+    drive.off()
     random_turn()
+    drive.off()
     snoofermotor.on(30)
     drive.on(30,30)
+    print("Zero_in funstion complete")
     return
 
 #   Hardware
@@ -181,8 +198,8 @@ sensor_connected=False
 snoofermotor=Motor(OUTPUT_A)
 snoofermotor.stop_action='brake'
 time.sleep(2)
-set_port('pistorms:BBS1','ev3-uart', device='lego-ev3-us')
-snoofer=UltrasonicSensor("pistorms:BBS1")
+snoofer_port=set_port('pistorms:BBS1','i2c-thru','Custom')
+snoofer=Snoofer()
 whiskers_port=set_port('pistorms:BBS2',"i2c-thru", "Custom")
 left_whisker=Whisker(multiplexor_port=2, name="LW")
 left_whisker.selftest()
@@ -193,6 +210,27 @@ right_whisker.calibrate()
 print(left_motor.state)
 time.sleep(0.5)
 
+#print('Entering snoofer testing mode')
+# while True:
+#     left_output=left_whisker.read()
+#     if left_output>0:
+#         time.sleep(0.1)
+#         print('Sampling\n(This will take 12 seconds)')
+#         iterations=24
+#         #cycles_complete=0
+#         #readout_sum=0
+#         #corrected_readout_sum=0
+#         #while cycles_complete<24:
+#         readout=snoofer.read_direct()
+#             #readout_sum+=readout
+#         corrected_readout=snoofer.read_corrected()
+#             #corrected_readout_sum+=corrected_readout
+#             #cycles_complete+=1
+#         print(corrected_readout)
+#             #time.sleep(0.01)
+#         #print(readout_sum/iterations)
+#         #print(corrected_readout_sum/iterations)
+#     time.sleep(0.3)
 
 
 #   Snoofer Calibration
@@ -232,7 +270,7 @@ while mode=="Wander":
     object_found=False
     left_output=left_whisker.read()
     right_output=right_whisker.read()
-    if snoofer.distance_centimeters<30 and object_found==False:
+    if snoofer.read_corrected()<20 and object_found==False:
         zero_in()
         print("I have escaped the loop!")
     if left_output>0 and object_found==False:
