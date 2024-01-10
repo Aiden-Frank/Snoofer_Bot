@@ -3,27 +3,29 @@
 
 from ev3dev2.button import Button
 from ev3dev2.motor import (Motor, OUTPUT_A, OUTPUT_C, OUTPUT_D,
-                            MoveDifferential, SpeedRPM)
+                            MoveDifferential)
 from ev3dev2.port import LegoPort
-from ev3dev2.sensor.lego import UltrasonicSensor, GyroSensor, TouchSensor
+from ev3dev2.sensor.lego import GyroSensor
 from ev3dev2.sensor import INPUT_1, INPUT_2, INPUT_3, INPUT_4
 from ev3dev2.wheel import EV3EducationSetTire
 import math
+from mpu6050 import mpu6050
 import numpy as np
 import paho.mqtt.client as mqtt
 import random
 from smbus import SMBus
+import _thread
+import threading
 import time
 
 
-#   Mode Library    The modes that define the bot's behavior
+#   Modes:    The modes that define the bot's behavior
 #       Pre-Run: Preparing functions, classes, hardware, and calibrations.
 #       Initiation: Preparing variables
 #       Wander: Bumbling about looking for stuff
 
 mode="Pre-Run"
 print("Mode set: Pre-Run")
-object_found=False
 #   Classes
 #   Enter new classes in alphabetical order
 
@@ -33,15 +35,66 @@ class Comms():
         broker_address="192.168.7.212"
         self.client.connect(broker_address)
         def on_message(client, userdata, message):
-            str(message.payload.decode("utf-8"))
             global recieved
             recieved=int(message.payload.decode("utf-8"))
             print(recieved)
         self.client.on_message=on_message
         self.client.subscribe('Computer_to_bot')
         self.client.loop_start()
-    def send_coords(self,string):
-        self.client.publish("Bot_to_computer",string)
+    def send_data(self,data,type):
+        coord_list=[]
+        #First item is list indicates list type
+        if type=='telemetry':
+            coord_list.append('0')
+        elif type=="raw_array":
+            coord_list.append('1')
+        else:
+            raise ValueError('Unrecognized input for type')
+
+        for k in data:
+            coord_list.append(str(int(k)))
+        coord_string=','.join(coord_list)
+        self.client.publish("Bot_to_computer",coord_string)
+
+class Gyro:
+    def __init__(self) -> None:
+        gyroport=set_port(port='pistorms:BAS1', mode='i2c-thru', device='Custom')
+        gyro=mpu6050(0x68)
+        #Setting range to appropriate quantity
+        gyro.set_gyro_range==gyro.GYRO_RANGE_250DEG
+        self.circle_angle=0
+        self.calibrated=False
+        def _gyro_monitor():
+            previous_angle_prime=0.0
+            previous_time=time.time()
+            calibration_list=[]
+            angle_error=0.0
+            print("Calibrating gyro")
+            print("Press GO to skip remaining calibration")
+            print('Progress:')
+            while True:
+                all_rotations=gyro.get_gyro_data()
+                current_angle_prime=all_rotations['z']
+                current_time=time.time()
+                self.circle_angle+=(((current_angle_prime+previous_angle_prime)/2)-angle_error)*(current_time-previous_time)
+                previous_time=current_time
+                previous_angle_prime=current_angle_prime
+                if self.calibrated==False:
+                    calibration_list.append(current_angle_prime)
+                    time.sleep(0.01)
+                    length=len(calibration_list)
+                    if length/5-int(length/5)==0:
+                        print(int(length/7.19),'%',end='\r')
+                    if len(calibration_list)>719 or button.enter:
+                        angle_error=sum(calibration_list)/len(calibration_list)
+                        self.calibrated=True
+                        print('Gyro calibration complete')
+                        print('Samples:',len(calibration_list))
+                        print("Correction factor:",angle_error)
+        self.circle_angle=90
+        _thread.start_new_thread(_gyro_monitor,())
+        while self.calibrated==False:
+            pass
 
 class Snoofer():
     #Note: LiDAR sensor accuracy changes with object angular width
@@ -102,12 +155,110 @@ class Whisker():
         time.sleep(0.5)
 
 #   Functions
+stop_drive_thread=False
+thread_stop_time=0
+def drive_precise(distance=1):
+#Function to drive in straight line, even after turning
+    def _drive_precise_thread(distance):
+        global stop_drive_thread
+        stop_drive_thread=False
+        print("Driving in a precise manner")
+        reference_frame='normal'
+        distance_covered=0
+        start_pos=[drive.x_pos_mm,drive.y_pos_mm]
+        target_angle=gyro.circle_angle
+        current_angle=gyro.circle_angle
+        turn_force=0
+        drive.on(30,30)
+        if target_angle<12 or target_angle>348:
+            reference_frame='reversed'
+        print(target_angle)
+        if reference_frame=='normal':
+            print("Reference frame- normal")
+            while distance_covered<distance and stop_drive_thread==False:
+                turn_force=target_angle-current_angle
+                drive.on(30-turn_force,30+turn_force)
+                distance_covered=math.sqrt(math.pow(start_pos[0]-drive.x_pos_mm,2)+math.pow(start_pos[1]-drive.y_pos_mm,2))
+                current_angle=gyro.circle_angle
+                if stop_drive_thread==True:
+                    return
+        if reference_frame=='reversed':
+            print("Reference frame- reversed")
+            if target_angle>180:
+                target_angle-=360
+            while distance_covered<distance and stop_drive_thread==False:
+                if gyro.circle_angle>180:
+                    current_angle=gyro.circle_angle-360
+                else:
+                    current_angle=gyro.circle_angle
+                turn_force=int((target_angle-current_angle)/2)
+                drive.on(30-turn_force,30+turn_force)
+                distance_covered=math.sqrt(math.pow(start_pos[0]-drive.x_pos_mm,2)+math.pow(start_pos[1]-drive.y_pos_mm,2))
+        global thread_stop_time
+        thread_stop_time=time.time()
+        print("Stopping drive thread")
+        drive.off()
+
+#Code to run function
+    drive_thread=threading.Thread(target=_drive_precise_thread, args=(distance,))
+    drive_thread.start()
+    print("Starting drive thread")
+    while drive_thread.is_alive==False:
+        time.sleep(0.05)  
+
+def find_home():
+    xlist=[]
+    ylist=[]
+    home_found=False
+    print(gyro.circle_angle)
+    print(drive.x_pos_mm)
+    print(drive.y_pos_mm)
+    distance_to_home=np.sqrt(drive.x_pos_mm*drive.x_pos_mm+drive.y_pos_mm*drive.y_pos_mm)
+    time.sleep(1)
+    target_angle_deg=180+math.degrees(math.atan2(drive.y_pos_mm,drive.x_pos_mm))
+    print("Target Angle:",target_angle_deg)
+    print('Gyro Angle:',gyro.circle_angle)
+    turn_angle_deg=(target_angle_deg-gyro.circle_angle)*-1
+    print('Turn angle:',turn_angle_deg)
+    time.sleep(3)
+    drive.turn_degrees(use_gyro=True,speed=30,degrees=turn_angle_deg,block=False)
+    time.sleep(3)
+    print("Final angle:",gyro.circle_angle)
+    drive_precise(distance=distance_to_home)
+    print('Driving')
+    snoofermotor.on(30)
+    while home_found==False:
+        distance=snoofer.read_corrected()
+        if distance<20:
+            home_found=True
+    global stop_drive_thread
+    stop_drive_thread=True
+    drive.off()
+    snoofermotor.off()
+    print(4)
+    snoofermotor.on_for_degrees(30,360,block=False)
+    while snoofermotor.is_running==True:
+        time.sleep(0.06)
+        angle_deg=get_snoofer_angle()
+        angle=(math.radians(angle_deg))
+        distance=(snoofer.read_corrected())
+        xlist.append(distance*math.cos(angle))
+        ylist.append(distance*math.sin(angle))
+    comms.send_data(xlist,'raw_array')
+    time.sleep(2)
+    comms.send_data(ylist,'raw_array')
+    time.sleep(2)
+    print("Leaving function")
+    exit
+
 
 def get_snoofer_angle():
-    motor_angle_deg=snoofermotor.position()
+    #Returns relative snoofer angle in degrees
+    motor_angle_deg=float(snoofermotor.position)
     motor_angle=math.radians(motor_angle_deg)
     snoofer_angle=-17.866*math.cos(motor_angle+0.0626)-1.3659
     return snoofer_angle
+
 
 def random_turn():
     magnitude=10*random.randint(4,18)
@@ -116,9 +267,6 @@ def random_turn():
         direction=-1
     drive.turn_degrees(20, direction*magnitude, block=True)
     time.sleep(magnitude/60)
-    print ("Turn argument:")
-    print (direction*magnitude)
-    print("I'm done with the turn")
     return
 
 def set_port(port,mode,device): 
@@ -131,27 +279,46 @@ def set_port(port,mode,device):
         sensor.set_device=device
     time.sleep(0.5)
 
+def telemetry(transmit=True,mode="absolute"):
+    snoofer_angle=get_snoofer_angle()
+    snoofer_distance=snoofer.read_corrected()+7
+    if mode=='absolute':
+        bot_x=drive.x_pos_mm/10.0
+        bot_y=drive.y_pos_mm/10.0
+        snoofer_angle+=gyro.circle_angle
+    object_rel_x=math.cos(snoofer_angle)*(snoofer_distance)
+    object_rel_y=math.sin(snoofer_angle)*(snoofer_distance)
+    if mode=="absolute":
+        object_x=object_rel_x+bot_x
+        object_y=object_rel_y+bot_y
+    elif mode=='relative':
+        object_x=object_rel_x
+        object_y=object_rel_y
+    if transmit==True:
+        array_to_send=[object_x,object_y,bot_x,bot_y,left_motor.position/360,right_motor.position/360]
+        comms.send_data(array_to_send,'telemetry')
+        #print('Outgoing array:',array_to_send)
+    return object_x, object_y
+
 def zero_in():
+    global stop_drive_thread
+    stop_drive_thread=True
     drive.stop()
-    print("Object detected")
     global object_found
     snoofermotor.stop()
     time.sleep(0.5)
     snoofer_stopped=False
-    snoofermotor.on(30)
     while snoofer_stopped==False:
         snooferpos=snoofermotor.position%360
-        if snooferpos==92:
+        snoofermotor.on(20)
+        if snooferpos<94 and snooferpos>90:
             snoofermotor.stop()
             snoofer_stopped=True
-            print(snooferpos)
-    print("The snoofer should be straight")
     drive.on(15,15)
     while snoofer.read_corrected()>6:
         left_output=left_whisker.read()
         right_output=right_whisker.read()
         time.sleep(0.2)
-        print(snoofer.read_corrected())
         if left_output>0:
             time.sleep(0.2)
             drive.on_for_distance(24, -50, brake=False, block=True)
@@ -165,10 +332,11 @@ def zero_in():
             time.sleep(0.3)
             drive.on_for_distance(24, -50, brake=False, block=True)
             time.sleep(0.2)
-#           IMPORTANT: Do not enable block on following turn command, will hold up forever.
+#           Do not enable block on following turn command, will hold up forever.
             drive.turn_degrees(20, 20, block=False, use_gyro=False)
             time.sleep(0.2)
             drive.on(15,15)
+    telemetry()
     object_found=True
     drive.off()
     drive.on_for_distance(36, -360)
@@ -177,11 +345,13 @@ def zero_in():
     random_turn()
     drive.off()
     snoofermotor.on(30)
-    drive.on(30,30)
-    print("Zero_in funstion complete")
+    drive_precise(98989898)
     return
 
 #   Hardware
+
+#Note:  Motors have 'inertia' after turning in one direction, if told to turn in the other, 
+# they will take a bit to speed up all the way
 
 
 button=Button()
@@ -190,14 +360,15 @@ left_motor.stop_action='brake'
 right_motor=Motor(OUTPUT_D)
 right_motor.stop_action='brake'
 drive=MoveDifferential(OUTPUT_C, OUTPUT_D, EV3EducationSetTire, 152)
-gyroport=set_port(port='pistorms:BAS1', mode='ev3-uart', device='lego-ev3-gyro')
-gyro=GyroSensor('pistorms:BAS1')
-drive.gyro=gyro
+time.sleep(1)
 sensorport=set_port(port='pistorms:BBS1', mode='ev3-uart', device='lego-ev3-us')
 sensor_connected=False
 snoofermotor=Motor(OUTPUT_A)
 snoofermotor.stop_action='brake'
-time.sleep(2)
+time.sleep(1)
+gyroport=set_port(port='pistorms:BAS1', mode='i2c-thru', device='Custom')
+gyro=Gyro()
+comms=Comms()
 snoofer_port=set_port('pistorms:BBS1','i2c-thru','Custom')
 snoofer=Snoofer()
 whiskers_port=set_port('pistorms:BBS2',"i2c-thru", "Custom")
@@ -207,35 +378,13 @@ left_whisker.calibrate()
 right_whisker=Whisker(multiplexor_port=1, name="RW")
 right_whisker.selftest()
 right_whisker.calibrate()
-print(left_motor.state)
-time.sleep(0.5)
+time.sleep(1)
 
-#print('Entering snoofer testing mode')
-# while True:
-#     left_output=left_whisker.read()
-#     if left_output>0:
-#         time.sleep(0.1)
-#         print('Sampling\n(This will take 12 seconds)')
-#         iterations=24
-#         #cycles_complete=0
-#         #readout_sum=0
-#         #corrected_readout_sum=0
-#         #while cycles_complete<24:
-#         readout=snoofer.read_direct()
-#             #readout_sum+=readout
-#         corrected_readout=snoofer.read_corrected()
-#             #corrected_readout_sum+=corrected_readout
-#             #cycles_complete+=1
-#         print(corrected_readout)
-#             #time.sleep(0.01)
-#         #print(readout_sum/iterations)
-#         #print(corrected_readout_sum/iterations)
-#     time.sleep(0.3)
-
-
+terminate_at_objects=24
+objects_found=0
 #   Snoofer Calibration
 
-print("------\nUse whiskers to move snoofer so black part from motor faces out, parallel to grey peice below it. Press GO when done.\n------")
+print("------\nUse whiskers to move snoofer so black\npart from motor faces out, parallel to\ngrey peice below it. Press GO when done.\n------")
 while mode=="Pre-Run":
     left_output=left_whisker.read()
     right_output=right_whisker.read()
@@ -256,26 +405,29 @@ while mode=="Pre-Run":
     if button.enter:
         mode="Initiation"
         print("Mode set: Initiation")
-        drive.odometry_start()
-        gyro.calibrate()
+        drive.odometry_start(sleep_time=0.04,use_gyro=True)
+        drive.gyro=gyro
+        drive.y_pos_mm=250
         snoofermotor.position=0
         print(snoofermotor.position)
     time.sleep(0.1)
 
 mode="Wander"
 print('Mode set: Wander')
+drive_precise(9898989)
 snoofermotor.on(30)
-drive.on(30,30)
 while mode=="Wander":
+    if objects_found>1:
+        find_home()
     object_found=False
     left_output=left_whisker.read()
     right_output=right_whisker.read()
     if snoofer.read_corrected()<20 and object_found==False:
         zero_in()
-        print("I have escaped the loop!")
+        objects_found+=1
     if left_output>0 and object_found==False:
         zero_in()
-        print("I have escaped the loop!")
+        objects_found+=1
     if right_output>0 and object_found==False:
         zero_in()
-        print("I have escaped the loop!")
+        objects_found+=1
