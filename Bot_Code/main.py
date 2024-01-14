@@ -79,6 +79,10 @@ class Gyro:
                 self.circle_angle+=(((current_angle_prime+previous_angle_prime)/2)-angle_error)*(current_time-previous_time)
                 previous_time=current_time
                 previous_angle_prime=current_angle_prime
+                if self.circle_angle<0:
+                    self.circle_angle+=360
+                elif self.circle_angle>360:
+                    self.circle_angle-=360
                 if self.calibrated==False:
                     calibration_list.append(current_angle_prime)
                     time.sleep(0.01)
@@ -95,7 +99,6 @@ class Gyro:
         _thread.start_new_thread(_gyro_monitor,())
         while self.calibrated==False:
             pass
-
 class Snoofer():
     #Note: LiDAR sensor accuracy changes with object angular width
     def __init__(self,bus=SMBus(1)):
@@ -181,21 +184,24 @@ def drive_precise(distance=1):
                 distance_covered=math.sqrt(math.pow(start_pos[0]-drive.x_pos_mm,2)+math.pow(start_pos[1]-drive.y_pos_mm,2))
                 current_angle=gyro.circle_angle
                 if stop_drive_thread==True:
+                    drive.off()
                     return
         if reference_frame=='reversed':
             print("Reference frame- reversed")
             if target_angle>180:
-                target_angle-=360
+                target_angle-=180
+            else:
+                target_angle+=180
             while distance_covered<distance and stop_drive_thread==False:
-                if gyro.circle_angle>180:
-                    current_angle=gyro.circle_angle-360
+                turn_force=target_angle-current_angle
+                current_angle=gyro.circle_angle
+                if current_angle>180:
+                    current_angle-=180
                 else:
-                    current_angle=gyro.circle_angle
-                turn_force=int((target_angle-current_angle)/2)
+                    current_angle+=180
+                turn_force=target_angle-current_angle
                 drive.on(30-turn_force,30+turn_force)
                 distance_covered=math.sqrt(math.pow(start_pos[0]-drive.x_pos_mm,2)+math.pow(start_pos[1]-drive.y_pos_mm,2))
-        global thread_stop_time
-        thread_stop_time=time.time()
         print("Stopping drive thread")
         drive.off()
 
@@ -214,13 +220,11 @@ def find_home():
     print(drive.x_pos_mm)
     print(drive.y_pos_mm)
     distance_to_home=np.sqrt(drive.x_pos_mm*drive.x_pos_mm+drive.y_pos_mm*drive.y_pos_mm)
-    time.sleep(1)
     target_angle_deg=180+math.degrees(math.atan2(drive.y_pos_mm,drive.x_pos_mm))
     print("Target Angle:",target_angle_deg)
     print('Gyro Angle:',gyro.circle_angle)
     turn_angle_deg=(target_angle_deg-gyro.circle_angle)*-1
     print('Turn angle:',turn_angle_deg)
-    time.sleep(3)
     drive.turn_degrees(use_gyro=True,speed=30,degrees=turn_angle_deg,block=False)
     time.sleep(3)
     print("Final angle:",gyro.circle_angle)
@@ -344,14 +348,15 @@ def zero_in():
     drive.off()
     random_turn()
     drive.off()
-    snoofermotor.on(30)
     drive_precise(98989898)
+    snoofermotor.on(30)
     return
 
 #   Hardware
 
 #Note:  Motors have 'inertia' after turning in one direction, if told to turn in the other, 
 # they will take a bit to speed up all the way
+# The drive_precise function counters this effect
 
 
 button=Button()
@@ -417,7 +422,11 @@ print('Mode set: Wander')
 drive_precise(9898989)
 snoofermotor.on(30)
 while mode=="Wander":
-    if objects_found>1:
+    if objects_found>2:
+        stop_drive_thread=True
+        time.sleep(1)
+        print('Finding home')
+        time.sleep(2)
         find_home()
     object_found=False
     left_output=left_whisker.read()
@@ -425,9 +434,9 @@ while mode=="Wander":
     if snoofer.read_corrected()<20 and object_found==False:
         zero_in()
         objects_found+=1
-    if left_output>0 and object_found==False:
+    elif left_output>0 and object_found==False:
         zero_in()
         objects_found+=1
-    if right_output>0 and object_found==False:
+    elif right_output>0 and object_found==False:
         zero_in()
         objects_found+=1
