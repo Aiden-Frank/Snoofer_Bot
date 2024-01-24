@@ -18,6 +18,10 @@ import _thread
 import threading
 import time
 
+#Control variables
+move_snoofer=True
+use_whiskers=True
+
 
 #   Modes:    The modes that define the bot's behavior
 #       Pre-Run: Preparing functions, classes, hardware, and calibrations.
@@ -95,14 +99,15 @@ class Gyro:
                         print('Gyro calibration complete')
                         print('Samples:',len(calibration_list))
                         print("Correction factor:",angle_error)
-        self.circle_angle=90
         _thread.start_new_thread(_gyro_monitor,())
         while self.calibrated==False:
             pass
+        self.circle_angle=90
 class Snoofer():
     #Note: LiDAR sensor accuracy changes with object angular width
     def __init__(self,bus=SMBus(1)):
         self.bus=bus
+        self.sensor_length_cm=6
         self.raw_values_list=[6.2,11.1,12.3,12.9,13.9,14.7,16.3,17.7,18.6,19.5,20.5,21.5,22.4,23.1,24.2,25.9,26.6,27.5,28.7,29.0,33.6,39.1,43.4,47.1,51.5,54.2,55.3,58.6,61.7,63,64.1,64.9,66.2,67.6,69.4,78.6,88.5,98.8,109,114.2,123.8,137.4,142.4,148.8,159.3,172.6,182.7,191.5,194]
         self.corrected_values_list=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,25,30,35,40,45,50,51,52,53,54,55,56,57,58,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200]
         self.raw_values=np.asarray(self.raw_values_list)
@@ -115,10 +120,12 @@ class Snoofer():
         readout_low_byte,readout_high_byte=self.bus.read_i2c_block_data(0x62,0x10,2)
         readout=readout_low_byte+(readout_high_byte<<8)
         return int(readout)
-    def read_corrected(self):
+    def read_corrected(self,add_sensor_length=False):
         #Attempts to correct sensor output, returns cm
         raw_readout=self.read_direct()
         corrected_readout=np.interp([raw_readout], self.raw_values, self.corrected_values, right=raw_readout)
+        if add_sensor_length==True:
+            corrected_readout+=6
         return int(corrected_readout)
 class Whisker():
     def __init__(self, multiplexor_port=1,bus=SMBus(1), name="W") -> None:
@@ -213,8 +220,12 @@ def drive_precise(distance=1):
         time.sleep(0.05)  
 
 def find_home():
+    snoofermotor.off()
     xlist=[]
+    xarray=np.asarray(xlist)
     ylist=[]
+    yarray=np.asarray(ylist)
+    distance_list=[]
     home_found=False
     print(gyro.circle_angle)
     print(drive.x_pos_mm)
@@ -239,21 +250,48 @@ def find_home():
     stop_drive_thread=True
     drive.off()
     snoofermotor.off()
-    print(4)
-    snoofermotor.on_for_degrees(30,360,block=False)
+    snoofermotor.on_for_degrees(10,360,block=False,brake=False)
+    while snoofermotor.is_running==False:
+        pass
     while snoofermotor.is_running==True:
         time.sleep(0.06)
         angle_deg=get_snoofer_angle()
-        angle=(math.radians(angle_deg))
         distance=(snoofer.read_corrected())
-        xlist.append(distance*math.cos(angle))
-        ylist.append(distance*math.sin(angle))
-    comms.send_data(xlist,'raw_array')
-    time.sleep(2)
-    comms.send_data(ylist,'raw_array')
-    time.sleep(2)
-    print("Leaving function")
-    exit
+        if distance<40:
+            print('<40')
+            angle=(math.radians(angle_deg))
+            xarray=np.append(xarray, distance*math.cos(angle))
+            yarray=np.append(yarray, distance*math.sin(angle))
+    point_distance_array=np.asarray([])
+    for k in range(xarray.size):
+        point_distance_array=np.append(point_distance_array, np.sqrt((xarray[k]**2)+(yarray[k]**2)))
+    min_distance_index=np.argmin(point_distance_array)
+    closest_point=[xarray[min_distance_index], yarray[min_distance_index]]
+    print(closest_point)
+    time.sleep(10)
+    angle_to_turn=np.rad2deg(np.arctan2(closest_point[0], closest_point[1]))
+    print(angle_to_turn) #Next: run code to see what happens fgrhekfgysrhkvgryksvgdyhvksgykfdgvyfdksgvdfykvgdfyhvgfsykvgykvgdfyksvgfyhskvgfdysk
+    drive.turn_degrees(20,angle_to_turn)
+    snoofermotor.on_for_degrees(10,360,block=False,brake=False)
+    while snoofermotor.is_running==True:
+        time.sleep(0.06)
+        angle_deg=get_snoofer_angle()
+        distance=(snoofer.read_corrected(add_sensor_length=True))
+        if distance<40:
+            angle=(math.radians(angle_deg))
+            distance_list.append(distance)
+            xarray=np.append(xarray, distance*math.cos(angle))
+            yarray=np.append(yarray, distance*math.sin(angle))
+            distance_array=np.asarray(distance_list)
+    home_center=[xarray[np.argmin(distance_array)],yarray[np.argmin(distance_array)]]
+    distance_to_home=np.sqrt(home_center[0]*home_center[0]+home_center[1]*home_center[1])
+    bot_angle=np.deg2rad(gyro.circle_angle+180)
+    drive.x_pos_mm=distance_to_home*np.cos(bot_angle)*10
+    drive.y_pos_mm=distance_to_home*np.sin(bot_angle)*10
+    print(drive.x_pos_mm/10)
+    print(drive.y_pos_mm/10)
+    time.sleep(144)
+
 
 
 def get_snoofer_angle():
@@ -262,7 +300,6 @@ def get_snoofer_angle():
     motor_angle=math.radians(motor_angle_deg)
     snoofer_angle=-17.866*math.cos(motor_angle+0.0626)-1.3659
     return snoofer_angle
-
 
 def random_turn():
     magnitude=10*random.randint(4,18)
@@ -285,7 +322,7 @@ def set_port(port,mode,device):
 
 def telemetry(transmit=True,mode="absolute"):
     snoofer_angle=get_snoofer_angle()
-    snoofer_distance=snoofer.read_corrected()+7
+    snoofer_distance=snoofer.read_corrected(add_sensor_length=True)
     if mode=='absolute':
         bot_x=drive.x_pos_mm/10.0
         bot_y=drive.y_pos_mm/10.0
@@ -385,7 +422,6 @@ right_whisker.selftest()
 right_whisker.calibrate()
 time.sleep(1)
 
-terminate_at_objects=24
 objects_found=0
 #   Snoofer Calibration
 
@@ -396,15 +432,14 @@ while mode=="Pre-Run":
     if left_output>0 and right_output>0:
         snoofermotor.stop()
         print("Only press one whisker at a time!")
-
     if left_output==1:
-        snoofermotor.run_forever(speed_sp=100)
+        snoofermotor.run_forever(speed_sp=72)
     elif left_output==2:
-        snoofermotor.run_forever(speed_sp=200)
+        snoofermotor.run_forever(speed_sp=172)
     elif right_output==1:
-        snoofermotor.run_forever(speed_sp=-100)
+        snoofermotor.run_forever(speed_sp=-72)
     elif right_output==2:
-        snoofermotor.run_forever(speed_sp=-200)
+        snoofermotor.run_forever(speed_sp=-172)
     else:
         snoofermotor.stop()
     if button.enter:
@@ -412,9 +447,8 @@ while mode=="Pre-Run":
         print("Mode set: Initiation")
         drive.odometry_start(sleep_time=0.04,use_gyro=True)
         drive.gyro=gyro
-        drive.y_pos_mm=250
+        drive.y_pos_mm=270
         snoofermotor.position=0
-        print(snoofermotor.position)
     time.sleep(0.1)
 
 mode="Wander"
@@ -422,7 +456,7 @@ print('Mode set: Wander')
 drive_precise(9898989)
 snoofermotor.on(30)
 while mode=="Wander":
-    if objects_found>2:
+    if objects_found>0:
         stop_drive_thread=True
         time.sleep(1)
         print('Finding home')
