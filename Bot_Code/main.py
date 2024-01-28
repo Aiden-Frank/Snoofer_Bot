@@ -258,7 +258,6 @@ def find_home():
         angle_deg=get_snoofer_angle()
         distance=(snoofer.read_corrected())
         if distance<40:
-            print('<40')
             angle=(math.radians(angle_deg))
             xarray=np.append(xarray, distance*math.cos(angle))
             yarray=np.append(yarray, distance*math.sin(angle))
@@ -268,11 +267,13 @@ def find_home():
     min_distance_index=np.argmin(point_distance_array)
     closest_point=[xarray[min_distance_index], yarray[min_distance_index]]
     print(closest_point)
-    time.sleep(10)
-    angle_to_turn=np.rad2deg(np.arctan2(closest_point[0], closest_point[1]))
-    print(angle_to_turn) #Next: run code to see what happens fgrhekfgysrhkvgryksvgdyhvksgykfdgvyfdksgvdfykvgdfyhvgfsykvgykvgdfyksvgfyhskvgfdysk
-    drive.turn_degrees(20,angle_to_turn)
+    angle_to_turn=np.rad2deg(np.arctan2(closest_point[0], closest_point[1]))-90
+    print(angle_to_turn)
+    drive.turn_degrees(20,angle_to_turn,block=False)
+    time.sleep(1.5)
     snoofermotor.on_for_degrees(10,360,block=False,brake=False)
+    while snoofermotor.is_running==False:
+        pass
     while snoofermotor.is_running==True:
         time.sleep(0.06)
         angle_deg=get_snoofer_angle()
@@ -282,12 +283,16 @@ def find_home():
             distance_list.append(distance)
             xarray=np.append(xarray, distance*math.cos(angle))
             yarray=np.append(yarray, distance*math.sin(angle))
-            distance_array=np.asarray(distance_list)
+    distance_array=np.asarray(distance_list)
     home_center=[xarray[np.argmin(distance_array)],yarray[np.argmin(distance_array)]]
-    distance_to_home=np.sqrt(home_center[0]*home_center[0]+home_center[1]*home_center[1])
-    bot_angle=np.deg2rad(gyro.circle_angle+180)
-    drive.x_pos_mm=distance_to_home*np.cos(bot_angle)*10
-    drive.y_pos_mm=distance_to_home*np.sin(bot_angle)*10
+    distance_to_home=np.sqrt(home_center[0]**2+home_center[1]**2)+6 #6 is radius of home
+    bot_angle_from_home=np.deg2rad(gyro.circle_angle+180)
+    drive.x_pos_mm=distance_to_home*np.cos(bot_angle_from_home)*10
+    drive.y_pos_mm=distance_to_home*np.sin(bot_angle_from_home)*10
+    print(drive.x_pos_mm)
+    print(drive.y_pos_mm)
+    print('---------')  #Working, but new position may not be on same axes as old one
+    print(np.min(distance_to_home))
     print(drive.x_pos_mm/10)
     print(drive.y_pos_mm/10)
     time.sleep(144)
