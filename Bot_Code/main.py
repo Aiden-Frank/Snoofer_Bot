@@ -287,6 +287,7 @@ def find_home():
     home_center=[xarray[np.argmin(distance_array)],yarray[np.argmin(distance_array)]]
     distance_to_home=np.sqrt(home_center[0]**2+home_center[1]**2)+6 #6 is radius of home
     bot_angle_from_home=np.deg2rad(gyro.circle_angle+180)
+    print(np.rad2deg(bot_angle_from_home))
     drive.x_pos_mm=distance_to_home*np.cos(bot_angle_from_home)*10
     drive.y_pos_mm=distance_to_home*np.sin(bot_angle_from_home)*10
     print(drive.x_pos_mm)
@@ -459,17 +460,21 @@ while mode=="Pre-Run":
 mode="Wander"
 print('Mode set: Wander')
 drive_precise(9898989)
-snoofermotor.on(30)
+left_output=0
+right_output=0
+#if move_snoofer==True:
+#   snoofermotor.on(30)
 while mode=="Wander":
-    if objects_found>0:
+    if objects_found>2:
         stop_drive_thread=True
         time.sleep(1)
         print('Finding home')
         time.sleep(2)
         find_home()
     object_found=False
-    left_output=left_whisker.read()
-    right_output=right_whisker.read()
+    if use_whiskers==True:
+        left_output=left_whisker.read()
+        right_output=right_whisker.read()
     if snoofer.read_corrected()<20 and object_found==False:
         zero_in()
         objects_found+=1
