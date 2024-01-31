@@ -19,8 +19,7 @@ import threading
 import time
 
 #Control variables
-move_snoofer=True
-use_whiskers=True
+operation_mode='Map'
 
 
 #   Modes:    The modes that define the bot's behavior
@@ -355,44 +354,46 @@ def zero_in():
     snoofermotor.stop()
     time.sleep(0.5)
     snoofer_stopped=False
-    while snoofer_stopped==False:
-        snooferpos=snoofermotor.position%360
-        snoofermotor.on(20)
-        if snooferpos<94 and snooferpos>90:
-            snoofermotor.stop()
-            snoofer_stopped=True
-    drive.on(15,15)
-    while snoofer.read_corrected()>6:
-        left_output=left_whisker.read()
-        right_output=right_whisker.read()
-        time.sleep(0.2)
-        if left_output>0:
+    if mode=="Map":
+        while snoofer_stopped==False:
+            snooferpos=snoofermotor.position%360
+            snoofermotor.on(20)
+            if snooferpos<94 and snooferpos>90:
+                snoofermotor.stop()
+                snoofer_stopped=True
+        drive.on(15,15)
+        while snoofer.read_corrected()>6:
+            left_output=left_whisker.read()
+            right_output=right_whisker.read()
             time.sleep(0.2)
-            drive.on_for_distance(24, -50, brake=False, block=True)
-            time.sleep(0.2)
-#           IMPORTANT: Do not enable block on following turn command, will hold up forever.
-            drive.turn_degrees(20, -20, block=False, use_gyro=False)
-            time.sleep(0.5)
-            drive.on(15,15)
-        if right_output>0:
-            drive.off()
-            time.sleep(0.3)
-            drive.on_for_distance(24, -50, brake=False, block=True)
-            time.sleep(0.2)
-#           Do not enable block on following turn command, will hold up forever.
-            drive.turn_degrees(20, 20, block=False, use_gyro=False)
-            time.sleep(0.2)
-            drive.on(15,15)
-    telemetry()
-    object_found=True
-    drive.off()
+            if left_output>0:
+                time.sleep(0.2)
+                drive.on_for_distance(24, -50, brake=False, block=True)
+                time.sleep(0.2)
+    #           IMPORTANT: Do not enable block on following turn command, will hold up forever.
+                drive.turn_degrees(20, -20, block=False, use_gyro=False)
+                time.sleep(0.5)
+                drive.on(15,15)
+            if right_output>0:
+                drive.off()
+                time.sleep(0.3)
+                drive.on_for_distance(24, -50, brake=False, block=True)
+                time.sleep(0.2)
+    #           Do not enable block on following turn command, will hold up forever.
+                drive.turn_degrees(20, 20, block=False, use_gyro=False)
+                time.sleep(0.2)
+                drive.on(15,15)
+        telemetry()
+        object_found=True
+        drive.off()
     drive.on_for_distance(36, -360)
     time.sleep(0.5)
     drive.off()
     random_turn()
     drive.off()
     drive_precise(98989898)
-    snoofermotor.on(30)
+    if mode=='Map' or use_snoofermotor_and_whiskers==True:
+        snoofermotor.on(30)
     return
 
 #   Hardware
@@ -457,24 +458,24 @@ while mode=="Pre-Run":
         snoofermotor.position=0
     time.sleep(0.1)
 
-mode="Wander"
-print('Mode set: Wander')
+mode=operation_mode
+print("Mode set: ",operation_mode)
+use_snoofermotor_and_whiskers=True
 drive_precise(9898989)
 left_output=0
 right_output=0
-#if move_snoofer==True:
-#   snoofermotor.on(30)
-while mode=="Wander":
+if mode=='Map' or use_snoofermotor_and_whiskers==True:
+    snoofermotor.on(30)
+while mode=="Map":
     if objects_found>2:
         stop_drive_thread=True
         time.sleep(1)
         print('Finding home')
-        time.sleep(2)
+        time.sleep(1)
         find_home()
     object_found=False
-    if use_whiskers==True:
-        left_output=left_whisker.read()
-        right_output=right_whisker.read()
+    left_output=left_whisker.read()
+    right_output=right_whisker.read()
     if snoofer.read_corrected()<20 and object_found==False:
         zero_in()
         objects_found+=1
@@ -484,3 +485,13 @@ while mode=="Wander":
     elif right_output>0 and object_found==False:
         zero_in()
         objects_found+=1
+while mode=="Wander":
+    if use_snoofermotor_and_whiskers==True:
+        left_output=left_whisker.read()
+        right_output=right_whisker.read()
+    if snoofer.read_corrected()<20 and object_found==False:
+        zero_in()
+    elif left_output>0 and object_found==False:
+        zero_in()
+    elif right_output>0 and object_found==False:
+        zero_in()
