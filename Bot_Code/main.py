@@ -19,7 +19,8 @@ import threading
 import time
 
 #Control variables
-operation_mode='Map'
+operation_mode='Wander'
+use_snoofermotor_and_whiskers=False
 
 
 #   Modes:    The modes that define the bot's behavior
@@ -460,12 +461,13 @@ while mode=="Pre-Run":
 
 mode=operation_mode
 print("Mode set: ",operation_mode)
-use_snoofermotor_and_whiskers=True
 drive_precise(9898989)
 left_output=0
 right_output=0
 if mode=='Map' or use_snoofermotor_and_whiskers==True:
     snoofermotor.on(30)
+else:
+    snoofermotor.on_to_position(30,92,block=False)
 while mode=="Map":
     if objects_found>2:
         stop_drive_thread=True
@@ -485,13 +487,14 @@ while mode=="Map":
     elif right_output>0 and object_found==False:
         zero_in()
         objects_found+=1
+print("VRMSK")
 while mode=="Wander":
     if use_snoofermotor_and_whiskers==True:
         left_output=left_whisker.read()
         right_output=right_whisker.read()
-    if snoofer.read_corrected()<20 and object_found==False:
+    if snoofer.read_corrected()<20:
         zero_in()
-    elif left_output>0 and object_found==False:
+    elif left_output>0:
         zero_in()
-    elif right_output>0 and object_found==False:
+    elif right_output>0:
         zero_in()
