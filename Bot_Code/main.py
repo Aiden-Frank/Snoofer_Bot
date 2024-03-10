@@ -19,8 +19,9 @@ import threading
 import time
 
 #Control variables
-operation_mode='Wander'
-use_snoofermotor_and_whiskers=False
+operation_mode='Map'
+use_snoofermotor=True
+use_whiskers=False
 
 
 #   Modes:    The modes that define the bot's behavior
@@ -54,12 +55,10 @@ class Comms():
             coord_list.append('1')
         else:
             raise ValueError('Unrecognized input for type')
-
         for k in data:
             coord_list.append(str(int(k)))
         coord_string=','.join(coord_list)
         self.client.publish("Bot_to_computer",coord_string)
-
 class Gyro:
     def __init__(self) -> None:
         gyroport=set_port(port='pistorms:BAS1', mode='i2c-thru', device='Custom')
@@ -218,8 +217,8 @@ def drive_precise(distance=1):
     print("Starting drive thread")
     while drive_thread.is_alive==False:
         time.sleep(0.05)  
-
 def find_home():
+    home_radius_cm=7.5
     snoofermotor.off()
     xlist=[]
     xarray=np.asarray(xlist)
@@ -241,10 +240,12 @@ def find_home():
     print("Final angle:",gyro.circle_angle)
     drive_precise(distance=distance_to_home)
     print('Driving')
-    snoofermotor.on(30)
+    snoofermotor.on(40)
+    if drive.x_pos_mm**2+drive.y_pos_mm**2>90000:
+        drive_precise(distance=distance_to_home)
     while home_found==False:
         distance=snoofer.read_corrected()
-        if distance<20:
+        if distance<30:
             home_found=True
     global stop_drive_thread
     stop_drive_thread=True
@@ -271,6 +272,8 @@ def find_home():
     print(angle_to_turn)
     drive.turn_degrees(20,angle_to_turn,block=False)
     time.sleep(1.5)
+    drive_precise(point_distance_array[min_distance_index]/2)
+    time.sleep(3)
     snoofermotor.on_for_degrees(10,360,block=False,brake=False)
     while snoofermotor.is_running==False:
         pass
@@ -285,37 +288,32 @@ def find_home():
             yarray=np.append(yarray, distance*math.sin(angle))
     distance_array=np.asarray(distance_list)
     home_center=[xarray[np.argmin(distance_array)],yarray[np.argmin(distance_array)]]
-    distance_to_home=np.sqrt(home_center[0]**2+home_center[1]**2)+6 #6 is radius of home
+    distance_to_home=np.sqrt(home_center[0]**2+home_center[1]**2)+home_radius_cm
     bot_angle_from_home=np.deg2rad(gyro.circle_angle+180)
     print(np.rad2deg(bot_angle_from_home))
     drive.x_pos_mm=distance_to_home*np.cos(bot_angle_from_home)*10
     drive.y_pos_mm=distance_to_home*np.sin(bot_angle_from_home)*10
     print(drive.x_pos_mm)
     print(drive.y_pos_mm)
-    print('---------')  #Working, but new position may not be on same axes as old one
+    print('---------') 
     print(np.min(distance_to_home))
     print(drive.x_pos_mm/10)
     print(drive.y_pos_mm/10)
-    time.sleep(144)
-
-
-
+    snoofermotor.on(40)
 def get_snoofer_angle():
     #Returns relative snoofer angle in degrees
     motor_angle_deg=float(snoofermotor.position)
     motor_angle=math.radians(motor_angle_deg)
     snoofer_angle=-17.866*math.cos(motor_angle+0.0626)-1.3659
     return snoofer_angle
-
 def random_turn():
-    magnitude=10*random.randint(4,18)
+    magnitude=10*random.randint(9,18)
     direction=random.randint(1,2)
     if direction==2:
         direction=-1
     drive.turn_degrees(20, direction*magnitude, block=True)
     time.sleep(magnitude/60)
     return
-
 def set_port(port,mode,device): 
 #   Function to initiate sensors; port should be INPUT_N where N is 1 to 4
 #   mode is a string describing which driver to use (see https://docs.ev3dev.org/projects/lego-linux-drivers/en/ev3dev-stretch/sensors.html#supported-sensors)
@@ -325,7 +323,6 @@ def set_port(port,mode,device):
     if device=='lego-ev3-gyro':
         sensor.set_device=device
     time.sleep(0.5)
-
 def telemetry(transmit=True,mode="absolute"):
     snoofer_angle=get_snoofer_angle()
     snoofer_distance=snoofer.read_corrected(add_sensor_length=True)
@@ -333,8 +330,12 @@ def telemetry(transmit=True,mode="absolute"):
         bot_x=drive.x_pos_mm/10.0
         bot_y=drive.y_pos_mm/10.0
         snoofer_angle+=gyro.circle_angle
-    object_rel_x=math.cos(snoofer_angle)*(snoofer_distance)
-    object_rel_y=math.sin(snoofer_angle)*(snoofer_distance)
+    object_rel_x=math.cos(math.radians(snoofer_angle))*(snoofer_distance)
+    object_rel_y=math.sin(math.radians(snoofer_angle))*(snoofer_distance)
+    print("Snoofer distance:",snoofer_distance)
+    print("Snoofer angle:",snoofer_angle)
+    print("current position:",bot_x,",",bot_y)
+    print("Object rel coords:",object_rel_x,",",object_rel_y)
     if mode=="absolute":
         object_x=object_rel_x+bot_x
         object_y=object_rel_y+bot_y
@@ -342,16 +343,17 @@ def telemetry(transmit=True,mode="absolute"):
         object_x=object_rel_x
         object_y=object_rel_y
     if transmit==True:
-        array_to_send=[object_x,object_y,bot_x,bot_y,left_motor.position/360,right_motor.position/360]
+        array_to_send=[object_x,object_y,bot_x,bot_y,gyro.circle_angle]
         comms.send_data(array_to_send,'telemetry')
-        #print('Outgoing array:',array_to_send)
+        print('Outgoing array:',array_to_send)
     return object_x, object_y
-
 def zero_in():
+    stop_zero_in=False
     global stop_drive_thread
     stop_drive_thread=True
     drive.stop()
     global object_found
+    global objects_found
     snoofermotor.stop()
     time.sleep(0.5)
     snoofer_stopped=False
@@ -363,10 +365,17 @@ def zero_in():
                 snoofermotor.stop()
                 snoofer_stopped=True
         drive.on(15,15)
-        while snoofer.read_corrected()>6:
+        while snoofer.read_corrected()>6 and stop_zero_in==False:
             left_output=left_whisker.read()
             right_output=right_whisker.read()
             time.sleep(0.2)
+            #Checks if bot is near home and pointing toward it, to prevent collsion with home
+            if drive.x_pos_mm**2+drive.y_pos_mm**2<90000 and abs(math.degrees(np.arctan2(drive.y_pos_mm,drive.x_pos_mm))-gyro.circle_angle)>90:
+                drive.on_for_distance(-20,150,block=True)
+                drive.turn_degrees(20, 90, block=False, use_gyro=False)
+                time.sleep(3)
+                stop_zero_in=True
+                print('STOPPING')
             if left_output>0:
                 time.sleep(0.2)
                 drive.on_for_distance(24, -50, brake=False, block=True)
@@ -384,17 +393,20 @@ def zero_in():
                 drive.turn_degrees(20, 20, block=False, use_gyro=False)
                 time.sleep(0.2)
                 drive.on(15,15)
-        telemetry()
-        object_found=True
+        if stop_zero_in==False:
+            telemetry()
+            object_found=True
+            drive.off()
+    if stop_zero_in==False:
+        drive.on_for_distance(36, -360)
+        time.sleep(0.5)
         drive.off()
-    drive.on_for_distance(36, -360)
-    time.sleep(0.5)
-    drive.off()
-    random_turn()
-    drive.off()
+        random_turn()
+        drive.off()
+        objects_found+=1
     drive_precise(98989898)
-    if mode=='Map' or use_snoofermotor_and_whiskers==True:
-        snoofermotor.on(30)
+    if mode=='Map' or use_snoofermotor==True:
+        snoofermotor.on(40)
     return
 
 #   Hardware
@@ -455,41 +467,46 @@ while mode=="Pre-Run":
         print("Mode set: Initiation")
         drive.odometry_start(sleep_time=0.04,use_gyro=True)
         drive.gyro=gyro
-        drive.y_pos_mm=270
+        if operation_mode=="Map":
+            drive.y_pos_mm=270
         snoofermotor.position=0
     time.sleep(0.1)
 
 mode=operation_mode
+print("Start position:",drive.x_pos_mm,",",drive.y_pos_mm)
 print("Mode set: ",operation_mode)
 drive_precise(9898989)
 left_output=0
 right_output=0
-if mode=='Map' or use_snoofermotor_and_whiskers==True:
-    snoofermotor.on(30)
+if mode=='Map' or use_snoofermotor==True:
+    snoofermotor.on(40)
 else:
     snoofermotor.on_to_position(30,92,block=False)
 while mode=="Map":
-    if objects_found>2:
+    if objects_found>=4:
         stop_drive_thread=True
         time.sleep(1)
         print('Finding home')
         time.sleep(1)
         find_home()
+        time.sleep(20)
+        objects_found=0
+        print("Bot position",drive.x_pos_mm/10.0,",",drive.y_pos_mm/10.0)
+        print("Bot angle:", gyro.circle_angle)
+        drive.turn_degrees(20,90)
+        time.sleep(2)
+        drive_precise(9898989)
     object_found=False
     left_output=left_whisker.read()
     right_output=right_whisker.read()
     if snoofer.read_corrected()<20 and object_found==False:
         zero_in()
-        objects_found+=1
     elif left_output>0 and object_found==False:
         zero_in()
-        objects_found+=1
     elif right_output>0 and object_found==False:
         zero_in()
-        objects_found+=1
-print("VRMSK")
 while mode=="Wander":
-    if use_snoofermotor_and_whiskers==True:
+    if use_whiskers==True:
         left_output=left_whisker.read()
         right_output=right_whisker.read()
     if snoofer.read_corrected()<20:

@@ -40,12 +40,12 @@ if new_data[0]==0:
         time.sleep(2)
         if new_data!=previous_data:
             print (new_data)
-            plt.plot(new_data[0],new_data[1],"mo")
+            plt.plot(new_data[1],new_data[2],"mo")
             file.write(f"Object location: {new_data[1]},{new_data[2]}\n")
             if len(new_data)>3:
                 file.write(f"Bot location: {new_data[3]},{new_data[4]}\n")
-            if len(new_data)>5:
-                file.write(f'Left/Right motor position:s {new_data[5]},{new_data[6]}')
+            if len(new_data)>4:
+                file.write(f'Gyro angle: {new_data[5]}\n')
             file.flush()
             terminate+=1
             previous_data=new_data
