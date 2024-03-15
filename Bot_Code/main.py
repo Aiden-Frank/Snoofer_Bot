@@ -218,7 +218,7 @@ def drive_precise(distance=1):
     while drive_thread.is_alive==False:
         time.sleep(0.05)  
 def find_home():
-    home_radius_cm=7.5
+    home_radius_cm=6.25
     snoofermotor.off()
     xlist=[]
     xarray=np.asarray(xlist)
@@ -238,7 +238,6 @@ def find_home():
     drive.turn_degrees(use_gyro=True,speed=30,degrees=turn_angle_deg,block=False)
     time.sleep(3)
     print("Final angle:",gyro.circle_angle)
-    drive_precise(distance=distance_to_home)
     print('Driving')
     snoofermotor.on(40)
     if drive.x_pos_mm**2+drive.y_pos_mm**2>90000:
@@ -272,31 +271,29 @@ def find_home():
     print(angle_to_turn)
     drive.turn_degrees(20,angle_to_turn,block=False)
     time.sleep(1.5)
-    drive_precise(point_distance_array[min_distance_index]/2)
+    drive_precise(point_distance_array[min_distance_index]*10-120)
     time.sleep(3)
     snoofermotor.on_for_degrees(10,360,block=False,brake=False)
     while snoofermotor.is_running==False:
         pass
+    center_angle=0
     while snoofermotor.is_running==True:
         time.sleep(0.06)
         angle_deg=get_snoofer_angle()
+        angle_deg+=gyro.circle_angle
         distance=(snoofer.read_corrected(add_sensor_length=True))
         if distance<40:
             angle=(math.radians(angle_deg))
             distance_list.append(distance)
-            xarray=np.append(xarray, distance*math.cos(angle))
-            yarray=np.append(yarray, distance*math.sin(angle))
-    distance_array=np.asarray(distance_list)
-    home_center=[xarray[np.argmin(distance_array)],yarray[np.argmin(distance_array)]]
-    distance_to_home=np.sqrt(home_center[0]**2+home_center[1]**2)+home_radius_cm
-    bot_angle_from_home=np.deg2rad(gyro.circle_angle+180)
-    print(np.rad2deg(bot_angle_from_home))
-    drive.x_pos_mm=distance_to_home*np.cos(bot_angle_from_home)*10
-    drive.y_pos_mm=distance_to_home*np.sin(bot_angle_from_home)*10
-    print(drive.x_pos_mm)
-    print(drive.y_pos_mm)
+            if min(distance_list)==distance:
+                center_angle=angle
+                center_distance=distance
+    center_distance+=(home_radius_cm+1)
+    drive.x_pos_mm=center_distance*np.cos(center_angle+np.pi)*10
+    drive.y_pos_mm=center_distance*np.sin(center_angle+np.pi)*10
     print('---------') 
-    print(np.min(distance_to_home))
+    print(np.rad2deg(center_angle))
+    print(center_distance)
     print(drive.x_pos_mm/10)
     print(drive.y_pos_mm/10)
     snoofermotor.on(40)
@@ -472,6 +469,14 @@ while mode=="Pre-Run":
         snoofermotor.position=0
     time.sleep(0.1)
 
+print("Press GO if readout is fairly steady")
+stop_gyro_test=False
+while stop_gyro_test==False:
+    print(gyro.circle_angle)
+    for i in range(10):
+        time.sleep(0.1)
+        if button.enter:
+            stop_gyro_test=True
 mode=operation_mode
 print("Start position:",drive.x_pos_mm,",",drive.y_pos_mm)
 print("Mode set: ",operation_mode)
@@ -482,6 +487,7 @@ if mode=='Map' or use_snoofermotor==True:
     snoofermotor.on(40)
 else:
     snoofermotor.on_to_position(30,92,block=False)
+
 while mode=="Map":
     if objects_found>=4:
         stop_drive_thread=True
