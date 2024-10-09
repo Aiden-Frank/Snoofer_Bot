@@ -4,6 +4,8 @@ This repository contains code for operating a robot I built, called Snoofer Bot.
 Code under Bot_Code is intended to be run on the robot.  Main.py is the primary one, the rest are for testing.
 Computer_code contains code to be run on a laptop nearby, to recieve and store data from the robot.
 
+A presentation detailing the robot, its code, and its performance is <a href="https://github.com/Aiden-Frank/Snoofer_Bot/blob/main/Presentation.pdf" target="_blank">PDF.</a>
+
 Image key:
 
 0: Raspberry Pi with PiStorms-v2: The robot’s central computer.
