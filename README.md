@@ -24,5 +24,6 @@ Image key:
 
 7: Sensor wiring:  This group of components powers the voltage dividers (6), and converts their data from the Grove format into I2C.
 
-![Snoofer Bot Front](./SnooferBotFront.jpg?raw=true)
-![Snoofer Bot Front](./SnooferBotRear.jpg?raw=true)
+<img width="812" height="607" alt="Screen Shot 2024-03-15 at 9 51 44 AM" src="https://github.com/user-attachments/assets/59d51634-4d70-44b7-bbe9-49cb4476992d" />
+<img width="649" height="603" alt="Screen Shot 2024-03-15 at 9 50 56 AM" src="https://github.com/user-attachments/assets/f6e0b19f-fcd8-4a8d-afb1-cf1b86cb9aea" />
+
